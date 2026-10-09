@@ -1,0 +1,56 @@
+---
+- name: User Access Management
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    # Default values (bisa dioverride via Survey)
+    user_action: "create"          # create / delete
+    user_name: ""
+    user_password: ""
+    user_groups: "sudo"
+    user_shell: "/bin/bash"
+    remove_home: false
+
+  tasks:
+    - name: Validate input
+      ansible.builtin.fail:
+        msg: "user_name wajib diisi"
+      when: user_name | length == 0
+
+    # ======================
+    # CREATE USER
+    # ======================
+    - name: Create user
+      when: user_action == "create"
+      block:
+        - name: Create user account
+          ansible.builtin.user:
+            name: "{{ user_name }}"
+            password: "{{ user_password | password_hash('sha512') }}"
+            groups: "{{ user_groups }}"
+            shell: "{{ user_shell }}"
+            state: present
+            create_home: true
+          no_log: true
+
+        - name: Show result
+          ansible.builtin.debug:
+            msg: "User {{ user_name }} berhasil dibuat"
+
+    # ======================
+    # DELETE USER
+    # ======================
+    - name: Delete user
+      when: user_action == "delete"
+      block:
+        - name: Remove user account
+          ansible.builtin.user:
+            name: "{{ user_name }}"
+            state: absent
+            remove: "{{ remove_home }}"
+
+        - name: Show result
+          ansible.builtin.debug:
+            msg: "User {{ user_name }} berhasil dihapus"
