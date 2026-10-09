@@ -1,0 +1,26 @@
+---
+- name: Patch Management - Ubuntu
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade packages
+      ansible.builtin.apt:
+        upgrade: dist
+      register: upgrade_result
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Show servers that need reboot
+      ansible.builtin.debug:
+        msg: "Server {{ inventory_hostname }} PERLU di-reboot"
+      when: reboot_required.stat.exists
