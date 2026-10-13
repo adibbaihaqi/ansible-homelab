@@ -5,76 +5,58 @@
   gather_facts: true
 
   tasks:
-    # ============================================
-    # 1. SSH Hardening Checks
-    # ============================================
     - name: "CIS-like | Check PermitRootLogin"
-      ansible.builtin.shell: grep -E "^PermitRootLogin" /etc/ssh/sshd_config || echo "PermitRootLogin not set (default yes)"
+      ansible.builtin.shell: "grep -E '^PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin not set (default yes)'"
       register: ssh_root
       changed_when: false
       failed_when: false
 
     - name: "CIS-like | Check PasswordAuthentication"
-      ansible.builtin.shell: grep -E "^PasswordAuthentication" /etc/ssh/sshd_config || echo "PasswordAuthentication not set"
+      ansible.builtin.shell: "grep -E '^PasswordAuthentication' /etc/ssh/sshd_config || echo 'PasswordAuthentication not set'"
       register: ssh_pass
       changed_when: false
       failed_when: false
 
     - name: "CIS-like | Check Protocol"
-      ansible.builtin.shell: grep -E "^Protocol" /etc/ssh/sshd_config || echo "Protocol not set (default 2)"
+      ansible.builtin.shell: "grep -E '^Protocol' /etc/ssh/sshd_config || echo 'Protocol not set (default 2)'"
       register: ssh_proto
       changed_when: false
       failed_when: false
 
-    # ============================================
-    # 2. Account & Password Policy
-    # ============================================
     - name: "CIS-like | Check users with UID 0"
       ansible.builtin.shell: "awk -F: '($3 == 0) { print $1 }' /etc/passwd"
       register: uid0_users
       changed_when: false
 
     - name: "CIS-like | Check password max days"
-      ansible.builtin.shell: grep -E "^PASS_MAX_DAYS" /etc/login.defs || echo "PASS_MAX_DAYS not set"
+      ansible.builtin.shell: "grep -E '^PASS_MAX_DAYS' /etc/login.defs || echo 'PASS_MAX_DAYS not set'"
       register: pass_max
       changed_when: false
       failed_when: false
 
     - name: "CIS-like | Check empty password accounts"
-      ansible.builtin.shell: "awk -F: '($2 == "") { print $1 }' /etc/shadow"
+      ansible.builtin.shell: "awk -F: '($2 == \"\") { print $1 }' /etc/shadow"
       register: empty_pass
       changed_when: false
       failed_when: false
 
-    # ============================================
-    # 3. Firewall
-    # ============================================
     - name: "CIS-like | Check UFW status"
-      ansible.builtin.shell: ufw status 2>/dev/null || echo "UFW not installed or not active"
+      ansible.builtin.shell: "ufw status 2>/dev/null || echo 'UFW not installed or not active'"
       register: ufw_status
       changed_when: false
       failed_when: false
 
-    # ============================================
-    # 4. World-writable files (sample)
-    # ============================================
     - name: "CIS-like | Find world-writable files in /etc (sample)"
-      ansible.builtin.shell: find /etc -type f -perm -0002 2>/dev/null | head -10
+      ansible.builtin.shell: "find /etc -type f -perm -0002 2>/dev/null | head -10"
       register: world_writable
       changed_when: false
       failed_when: false
 
-    # ============================================
-    # 5. Package update status
-    # ============================================
     - name: "CIS-like | Check if reboot is required"
       ansible.builtin.stat:
         path: /var/run/reboot-required
       register: reboot_required
 
-    # ============================================
-    # 6. Summary Report
-    # ============================================
     - name: Compliance Audit Summary
       ansible.builtin.debug:
         msg:
@@ -90,7 +72,4 @@
           - "PASS_MAX_DAYS        : {{ pass_max.stdout }}"
           - "Empty password users : {{ empty_pass.stdout_lines | default(['None']) | join(', ') }}"
           - "-------------------------------------"
-          - "UFW Status           : {{ ufw_status.stdout_lines | first }}"
-          - "World-writable /etc  : {{ world_writable.stdout_lines | default(['None found']) }}"
-          - "Reboot required      : {{ reboot_required.stat.exists }}"
-          - "===== END OF REPORT ====="
+          - "UFW Status           : {{ 
