@@ -6,7 +6,7 @@
 
   tasks:
     - name: "CIS-like | Check PermitRootLogin"
-      ansible.builtin.shell: "grep -E '^PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin not set (default yes)'"
+      ansible.builtin.shell: "grep -E '^PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin not set'"
       register: ssh_root
       changed_when: false
       failed_when: false
@@ -18,7 +18,7 @@
       failed_when: false
 
     - name: "CIS-like | Check Protocol"
-      ansible.builtin.shell: "grep -E '^Protocol' /etc/ssh/sshd_config || echo 'Protocol not set (default 2)'"
+      ansible.builtin.shell: "grep -E '^Protocol' /etc/ssh/sshd_config || echo 'Protocol not set'"
       register: ssh_proto
       changed_when: false
       failed_when: false
@@ -46,7 +46,7 @@
       changed_when: false
       failed_when: false
 
-    - name: "CIS-like | Find world-writable files in /etc (sample)"
+    - name: "CIS-like | Find world-writable files in /etc"
       ansible.builtin.shell: "find /etc -type f -perm -0002 2>/dev/null | head -10"
       register: world_writable
       changed_when: false
@@ -61,15 +61,18 @@
       ansible.builtin.debug:
         msg:
           - "===== COMPLIANCE AUDIT REPORT ====="
-          - "Host                 : {{ inventory_hostname }}"
-          - "OS                   : {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Host : {{ inventory_hostname }}"
+          - "OS : {{ ansible_distribution }} {{ ansible_distribution_version }}"
           - "-------------------------------------"
-          - "SSH PermitRootLogin  : {{ ssh_root.stdout }}"
-          - "SSH PasswordAuth     : {{ ssh_pass.stdout }}"
-          - "SSH Protocol         : {{ ssh_proto.stdout }}"
+          - "SSH PermitRootLogin : {{ ssh_root.stdout }}"
+          - "SSH PasswordAuth : {{ ssh_pass.stdout }}"
+          - "SSH Protocol : {{ ssh_proto.stdout }}"
           - "-------------------------------------"
-          - "Users with UID 0     : {{ uid0_users.stdout_lines | join(', ') }}"
-          - "PASS_MAX_DAYS        : {{ pass_max.stdout }}"
+          - "Users with UID 0 : {{ uid0_users.stdout_lines | join(', ') }}"
+          - "PASS_MAX_DAYS : {{ pass_max.stdout }}"
           - "Empty password users : {{ empty_pass.stdout_lines | default(['None']) | join(', ') }}"
           - "-------------------------------------"
-          - "UFW Status           : {{ 
+          - "UFW Status : {{ ufw_status.stdout_lines | first }}"
+          - "World-writable /etc : {{ world_writable.stdout_lines | default(['None found']) }}"
+          - "Reboot required : {{ reboot_required.stat.exists }}"
+          - "===== END OF REPORT ====="
