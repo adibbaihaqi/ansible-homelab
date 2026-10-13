@@ -41,7 +41,7 @@
       failed_when: false
 
     - name: "CIS-like | Check empty password accounts"
-      ansible.builtin.shell: awk -F: '($2 == "") { print $1 }' /etc/shadow
+      ansible.builtin.shell: "awk -F: '($2 == "") { print $1 }' /etc/shadow"
       register: empty_pass
       changed_when: false
       failed_when: false
