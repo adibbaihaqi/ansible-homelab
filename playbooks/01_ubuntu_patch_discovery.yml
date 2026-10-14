@@ -1,0 +1,132 @@
+---
+# 01_ubuntu_patch_discovery.yml
+# Semaphore Template: Patch Discovery (read-only / report)
+# Tujuan: Cek health, disk, available updates, simulasi upgrade & reboot requirement
+# Tidak menginstal apapun. Output untuk approval.
+
+- name: Ubuntu Patch Discovery (Report Only)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Threshold disk usage (%) – fail jika melebihi
+    disk_usage_threshold: 85
+    # Minimal free space di root (GB)
+    min_free_gb: 2
+
+  tasks:
+    # ------------------------------------------------------------------
+    # 1. Server Health & Disk Space
+    # ------------------------------------------------------------------
+    - name: Check root filesystem disk usage
+      ansible.builtin.shell: |
+        df -h / | awk 'NR==2 {print $5}' | tr -d '%'
+      register: disk_usage_pct
+      changed_when: false
+      failed_when: false
+
+    - name: Check free space on root (GB)
+      ansible.builtin.shell: |
+        df -BG / | awk 'NR==2 {print $4}' | tr -d 'G'
+      register: disk_free_gb
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if disk usage too high
+      ansible.builtin.fail:
+        msg: >
+          Disk usage on {{ inventory_hostname }} is {{ disk_usage_pct.stdout }}%
+          (threshold {{ disk_usage_threshold }}%). Clean disk before patching.
+      when: disk_usage_pct.stdout | int > disk_usage_threshold
+
+    - name: Fail if free space too low
+      ansible.builtin.fail:
+        msg: >
+          Free space on {{ inventory_hostname }} is only {{ disk_free_gb.stdout }}GB
+          (minimum {{ min_free_gb }}GB required).
+      when: disk_free_gb.stdout | int < min_free_gb
+
+    - name: Check if reboot already pending
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_pending
+
+    - name: Warn if reboot already pending
+      ansible.builtin.debug:
+        msg: "WARNING: {{ inventory_hostname }} already has a pending reboot. Resolve before new patching."
+      when: reboot_pending.stat.exists
+
+    # ------------------------------------------------------------------
+    # 2. Available Ubuntu Updates
+    # ------------------------------------------------------------------
+    - name: Update apt cache (discovery only)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      changed_when: false
+
+    - name: List all upgradable packages
+      ansible.builtin.shell: |
+        apt list --upgradable 2>/dev/null | grep -v "Listing..." || true
+      register: upgradable_packages
+      changed_when: false
+
+    - name: Count upgradable packages
+      ansible.builtin.set_fact:
+        upgradable_count: "{{ upgradable_packages.stdout_lines | length }}"
+
+    - name: List security-related upgradable packages
+      ansible.builtin.shell: |
+        apt list --upgradable 2>/dev/null | grep -i security || true
+      register: security_packages
+      changed_when: false
+
+    # ------------------------------------------------------------------
+    # 3. Simulate upgrade & identify reboot requirements
+    # ------------------------------------------------------------------
+    - name: Simulate dist-upgrade (dry-run)
+      ansible.builtin.command: apt-get -s dist-upgrade
+      register: simulate_upgrade
+      changed_when: false
+      failed_when: false
+
+    - name: Check packages that would require reboot (from simulate)
+      ansible.builtin.shell: |
+        apt-get -s dist-upgrade 2>/dev/null | grep -E 'linux-image|linux-headers|systemd|libc6|dbus' || true
+      register: reboot_candidates
+      changed_when: false
+
+    - name: Check current kernel
+      ansible.builtin.command: uname -r
+      register: current_kernel
+      changed_when: false
+
+    # ------------------------------------------------------------------
+    # 4. Report findings for approval
+    # ------------------------------------------------------------------
+    - name: PATCH DISCOVERY REPORT
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "  PATCH DISCOVERY REPORT"
+          - "=============================================="
+          - "Host            : {{ inventory_hostname }}"
+          - "OS              : {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel          : {{ current_kernel.stdout }}"
+          - "----------------------------------------------"
+          - "Disk usage /    : {{ disk_usage_pct.stdout }}%"
+          - "Free space /    : {{ disk_free_gb.stdout }} GB"
+          - "Reboot pending  : {{ reboot_pending.stat.exists }}"
+          - "----------------------------------------------"
+          - "Upgradable pkgs : {{ upgradable_count }}"
+          - "Security pkgs   : {{ security_packages.stdout_lines | length }}"
+          - "----------------------------------------------"
+          - "Upgradable list :"
+          - "{{ upgradable_packages.stdout_lines | default(['(none)']) }}"
+          - "----------------------------------------------"
+          - "Possible reboot-trigger packages (simulate):"
+          - "{{ reboot_candidates.stdout_lines | default(['(none)']) }}"
+          - "=============================================="
+          - "ACTION REQUIRED: Review report → Approve → Run 02_ubuntu_approved_patching"
+          - "=============================================="
