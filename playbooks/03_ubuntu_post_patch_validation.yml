@@ -1,0 +1,140 @@
+---
+# 03_ubuntu_post_patch_validation.yml
+# Semaphore Template: Post-Patch Validation
+# Verifikasi connectivity, disk, services, pending reboot, dan health dasar.
+
+- name: Ubuntu Post-Patch Validation
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Daftar service yang wajib running (sesuaikan per environment)
+    required_services:
+      - ssh
+      # - nginx
+      # - docker
+      # - postgresql
+
+  tasks:
+    # ------------------------------------------------------------------
+    # 1. Connectivity & basic health
+    # ------------------------------------------------------------------
+    - name: Verify SSH / connectivity (implicit via Ansible)
+      ansible.builtin.ping:
+
+    - name: Get uptime
+      ansible.builtin.command: uptime -p
+      register: uptime_info
+      changed_when: false
+
+    - name: Get current kernel
+      ansible.builtin.command: uname -r
+      register: current_kernel
+      changed_when: false
+
+    # ------------------------------------------------------------------
+    # 2. Disk space
+    # ------------------------------------------------------------------
+    - name: Check root disk usage
+      ansible.builtin.shell: |
+        df -h / | awk 'NR==2 {print $5 " used, " $4 " free"}'
+      register: disk_status
+      changed_when: false
+
+    - name: Check disk usage percentage
+      ansible.builtin.shell: df / | awk 'NR==2 {print $5}' | tr -d '%'
+      register: disk_pct
+      changed_when: false
+
+    # ------------------------------------------------------------------
+    # 3. Required services
+    # ------------------------------------------------------------------
+    - name: Check required services status
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: service_status
+      loop: "{{ required_services }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Build service report
+      ansible.builtin.set_fact:
+        service_report: >-
+          {{
+            service_report | default([]) +
+            [ item.item ~ ' → ' ~ (item.status.ActiveState | default('unknown')) ]
+          }}
+      loop: "{{ service_status.results }}"
+      when: required_services | length > 0
+
+    # ------------------------------------------------------------------
+    # 4. Pending reboot status
+    # ------------------------------------------------------------------
+    - name: Check pending reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_pending
+
+    - name: Get reboot-required packages
+      ansible.builtin.command: cat /var/run/reboot-required.pkgs
+      register: reboot_pkgs
+      when: reboot_pending.stat.exists
+      changed_when: false
+      failed_when: false
+
+    # ------------------------------------------------------------------
+    # 5. Package state after patch
+    # ------------------------------------------------------------------
+    - name: Count remaining upgradable packages
+      ansible.builtin.shell: |
+        apt list --upgradable 2>/dev/null | grep -v "Listing..." | wc -l
+      register: remaining_upgrades
+      changed_when: false
+
+    - name: Check last apt history (recent)
+      ansible.builtin.shell: |
+        grep -E "Upgrade|Install" /var/log/apt/history.log 2>/dev/null | tail -5 || echo "No recent history"
+      register: apt_history
+      changed_when: false
+      failed_when: false
+
+    # ------------------------------------------------------------------
+    # 6. Final validation report
+    # ------------------------------------------------------------------
+    - name: POST-PATCH VALIDATION REPORT
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "  POST-PATCH VALIDATION REPORT"
+          - "=============================================="
+          - "Host              : {{ inventory_hostname }}"
+          - "OS                : {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel            : {{ current_kernel.stdout }}"
+          - "Uptime            : {{ uptime_info.stdout }}"
+          - "----------------------------------------------"
+          - "Disk /            : {{ disk_status.stdout }}"
+          - "Disk usage %      : {{ disk_pct.stdout }}%"
+          - "----------------------------------------------"
+          - "Pending reboot    : {{ reboot_pending.stat.exists }}"
+          - "Reboot packages   : {{ reboot_pkgs.stdout_lines | default(['none']) }}"
+          - "Remaining upgrades: {{ remaining_upgrades.stdout }}"
+          - "----------------------------------------------"
+          - "Required services :"
+          - "{{ service_report | default(['(no services defined)']) }}"
+          - "----------------------------------------------"
+          - "Recent apt activity:"
+          - "{{ apt_history.stdout_lines | default(['N/A']) }}"
+          - "=============================================="
+          - "NOTE: Application-level health check harus dilakukan terpisah"
+          - "      (monitoring, synthetic checks, smoke test, dll)."
+          - "=============================================="
+
+    - name: Fail validation if critical service down
+      ansible.builtin.fail:
+        msg: "Service {{ item.item }} is not active (state={{ item.status.ActiveState | default('unknown') }})"
+      loop: "{{ service_status.results }}"
+      when:
+        - required_services | length > 0
+        - item.status.ActiveState is defined
+        - item.status.ActiveState != "active"
