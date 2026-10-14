@@ -1,0 +1,122 @@
+---
+# 02_ubuntu_approved_patching.yml
+# Semaphore Template: Approved Patching
+# Hanya dijalankan SETELAH approval dari hasil Discovery.
+# Install updates, reboot hanya jika required DAN diizinkan via variable.
+
+- name: Ubuntu Approved Patching
+  hosts: all
+  become: true
+  gather_facts: true
+  serial: "{{ batch_size | default(1) }}"   # Controlled batches (default 1 host at a time)
+  max_fail_percentage: 0
+
+  vars:
+    # Override via Survey / Extra Vars di Semaphore
+    allow_reboot: false          # Harus true secara eksplisit untuk reboot
+    batch_size: 1                # Jumlah host paralel per batch
+    security_only: false         # true = hanya security updates
+    reboot_timeout: 600
+    pre_reboot_delay: 10
+    post_reboot_delay: 30
+
+  tasks:
+    # ------------------------------------------------------------------
+    # Safety checks (ulangi minimal)
+    # ------------------------------------------------------------------
+    - name: Check disk usage before patching
+      ansible.builtin.shell: df / | awk 'NR==2 {print $5}' | tr -d '%'
+      register: disk_usage
+      changed_when: false
+
+    - name: Abort if disk critically full
+      ansible.builtin.fail:
+        msg: "Disk usage {{ disk_usage.stdout }}% — terlalu penuh untuk patching."
+      when: disk_usage.stdout | int > 90
+
+    # ------------------------------------------------------------------
+    # Install approved updates
+    # ------------------------------------------------------------------
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages (dist-upgrade)
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+        autoclean: true
+      register: upgrade_result
+      when: not security_only | bool
+
+    - name: Install security updates only
+      ansible.builtin.shell: |
+        apt-get update -qq
+        apt list --upgradable 2>/dev/null | grep -i security | cut -d/ -f1 | xargs -r apt-get install -y
+      register: security_upgrade
+      when: security_only | bool
+      changed_when: "'0 upgraded' not in security_upgrade.stdout"
+
+    - name: Show upgrade summary
+      ansible.builtin.debug:
+        msg: >
+          Upgrade completed on {{ inventory_hostname }}.
+          Changed: {{ upgrade_result.changed | default(security_upgrade.changed | default(false)) }}
+
+    # ------------------------------------------------------------------
+    # Reboot only when required AND explicitly permitted
+    # ------------------------------------------------------------------
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: List packages requiring reboot (if any)
+      ansible.builtin.command: cat /var/run/reboot-required.pkgs
+      register: reboot_pkgs
+      when: reboot_required.stat.exists
+      changed_when: false
+      failed_when: false
+
+    - name: Report reboot status
+      ansible.builtin.debug:
+        msg:
+          - "Reboot required : {{ reboot_required.stat.exists }}"
+          - "allow_reboot    : {{ allow_reboot }}"
+          - "Packages        : {{ reboot_pkgs.stdout_lines | default(['N/A']) }}"
+
+    - name: Reboot server (only if required AND allowed)
+      ansible.builtin.reboot:
+        msg: "Reboot by Ansible approved patching – {{ inventory_hostname }}"
+        reboot_timeout: "{{ reboot_timeout }}"
+        pre_reboot_delay: "{{ pre_reboot_delay }}"
+        post_reboot_delay: "{{ post_reboot_delay }}"
+        test_command: uptime
+      when:
+        - reboot_required.stat.exists
+        - allow_reboot | bool
+
+    - name: Skip reboot notice
+      ansible.builtin.debug:
+        msg: >
+          Reboot REQUIRED but allow_reboot=false.
+          Jalankan reboot manual atau set allow_reboot=true lalu re-run.
+      when:
+        - reboot_required.stat.exists
+        - not (allow_reboot | bool)
+
+    # ------------------------------------------------------------------
+    # Final status
+    # ------------------------------------------------------------------
+    - name: APPROVED PATCHING COMPLETE
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "  APPROVED PATCHING DONE"
+          - "=============================================="
+          - "Host            : {{ inventory_hostname }}"
+          - "Reboot required : {{ reboot_required.stat.exists }}"
+          - "Reboot executed : {{ (reboot_required.stat.exists and allow_reboot | bool) | ternary('YES', 'NO') }}"
+          - "Next step       : Run 03_ubuntu_post_patch_validation"
+          - "=============================================="
